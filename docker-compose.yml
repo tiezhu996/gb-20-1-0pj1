@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: timetable_db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-timetable_db}
+      POSTGRES_USER: ${DB_USER:-timetable_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-timetable_pass}
+    ports:
+      - "${DB_PORT:-5502}:5432"
+    volumes:
+      - timetable_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-timetable_user}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - timetable_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: timetable_backend
+    environment:
+      - DEBUG=${DEBUG:-True}
+      - SECRET_KEY=${SECRET_KEY:-django-secret-key-change-in-production}
+      - DB_NAME=${DB_NAME:-timetable_db}
+      - DB_USER=${DB_USER:-timetable_user}
+      - DB_PASSWORD=${DB_PASSWORD:-timetable_pass}
+      - DB_HOST=db
+      - DB_PORT=5432
+      - ALLOWED_HOSTS=*
+    ports:
+      - "${BACKEND_PORT:-3004}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - timetable_network
+    command: >
+      sh -c "python manage.py makemigrations &&
+             python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: timetable_frontend
+    ports:
+      - "${FRONTEND_PORT:-8004}:80"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - timetable_network
+
+networks:
+  timetable_network:
+    driver: bridge
+
+volumes:
+  timetable_postgres_data:
