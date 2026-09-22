@@ -118,6 +118,31 @@ export interface SwapRequest {
   updated_at?: string;
 }
 
+export interface SwapConflictDetail {
+  conflict_type: 'teacher' | 'classroom' | 'class' | 'locked' | 'same_slot';
+  day_of_week: number | null;
+  period: number | null;
+  slot?: string | null;
+  entity?: string | null;
+  involved_entries: number[];
+  courses: string[];
+  message: string;
+}
+
+export interface SwapResponse {
+  status: 'success' | 'rejected' | 'error';
+  request_id?: string;
+  message: string;
+  conflicts?: SwapConflictDetail[];
+  remaining_conflicts?: SwapConflictDetail[];
+  affected_entry_ids?: number[];
+  swap?: {
+    entry1: ScheduleEntry | null;
+    entry2: ScheduleEntry | null;
+  };
+  error?: string;
+}
+
 export interface Substitute {
   id: number;
   semester: number;

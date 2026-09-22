@@ -100,6 +100,41 @@ class SwapRequest(models.Model):
         return f"调课申请: {self.requesting_teacher} <-> {self.target_teacher}"
 
 
+class SwapRecord(models.Model):
+    """调课操作记录：用于试算结果留痕、幂等与并发控制。"""
+    STATUS_CHOICES = [
+        ('swapped', '交换成功'),
+        ('rejected', '试算拒绝'),
+    ]
+
+    request_id = models.CharField(
+        max_length=64, unique=True, db_index=True,
+        help_text='客户端生成的幂等键，同一请求重复/并发提交只生效一次'
+    )
+    semester = models.ForeignKey(Semester, on_delete=models.CASCADE)
+    entry1 = models.ForeignKey(
+        ScheduleEntry, on_delete=models.SET_NULL, null=True,
+        related_name='swap_records_as_first'
+    )
+    entry2 = models.ForeignKey(
+        ScheduleEntry, on_delete=models.SET_NULL, null=True,
+        related_name='swap_records_as_second'
+    )
+    entry1_id_snapshot = models.IntegerField(null=True, help_text='提交时的条目 ID 快照')
+    entry2_id_snapshot = models.IntegerField(null=True, help_text='提交时的条目 ID 快照')
+    reason = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    conflicts = models.JSONField(default=list, help_text='试算拒绝时的冲突明细')
+    message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"调课记录 #{self.id} ({self.request_id}): {self.status}"
+
+
 class Substitute(models.Model):
     semester = models.ForeignKey(Semester, on_delete=models.CASCADE)
     original_teacher = models.ForeignKey(

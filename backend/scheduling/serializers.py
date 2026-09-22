@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import (
-    ClassCourse, ScheduleEntry, Conflict, SwapRequest, Substitute
+    ClassCourse, ScheduleEntry, Conflict, SwapRequest, SwapRecord, Substitute
 )
 
 
@@ -59,6 +59,12 @@ class SwapRequestSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class SwapRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SwapRecord
+        fields = '__all__'
+
+
 class SubstituteSerializer(serializers.ModelSerializer):
     original_teacher_name = serializers.CharField(
         source='original_teacher.name', read_only=True
@@ -84,7 +90,18 @@ class ConflictCheckSerializer(serializers.Serializer):
 class SwapScheduleRequestSerializer(serializers.Serializer):
     entry1_id = serializers.IntegerField()
     entry2_id = serializers.IntegerField()
-    reason = serializers.CharField(required=False)
+    reason = serializers.CharField(required=False, allow_blank=True, default='')
+    request_id = serializers.CharField(
+        required=False, allow_blank=False, max_length=64,
+        help_text='客户端生成的幂等键（UUID），重复或并发提交只生效一次'
+    )
+
+    def validate(self, data):
+        if data['entry1_id'] == data['entry2_id']:
+            raise serializers.ValidationError(
+                {'non_field_errors': ['不能选择同一门课进行调课']}
+            )
+        return data
 
 
 class SubstituteRequestSerializer(serializers.Serializer):
