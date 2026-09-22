@@ -1,10 +1,11 @@
 from django.contrib import admin
 from .models import (
-    ClassCourse, ScheduleEntry, Conflict, SwapRequest, Substitute
+    ClassCourse, ScheduleEntry, Conflict, SwapRequest, SwapRecord, Substitute
 )
 
 admin.site.register(ClassCourse)
 admin.site.register(ScheduleEntry)
 admin.site.register(Conflict)
 admin.site.register(SwapRequest)
+admin.site.register(SwapRecord)
 admin.site.register(Substitute)

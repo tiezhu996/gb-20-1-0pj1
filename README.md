@@ -264,7 +264,8 @@ docker compose exec backend python manage.py createsuperuser
 | `/api/schedules/by_teacher/?semester_id=&teacher_id=` | GET | 按教师查询课表 |
 | `/api/schedules/by_classroom/?semester_id=&classroom_id=` | GET | 按教室查询课表 |
 | `/api/schedules/auto_schedule/` | POST | 执行自动排课 |
-| `/api/schedules/swap/` | POST | 交换两个课表条目 |
+| `/api/schedules/swap/` | POST | 交换两个课表条目（先试算冲突，任一冲突整笔拒绝；支持 client_token 幂等） |
+| `/api/schedules/swap_result/?client_token=` | GET | 按幂等令牌查询调课结果（交换结果或拒绝原因） |
 | `/api/schedules/substitute/` | POST | 安排代课教师 |
 | `/api/schedules/export_pdf/?type=&id=&semester_id=` | GET | 导出 PDF 课表 |
 | `/api/conflicts/` | GET | 查询冲突列表 |

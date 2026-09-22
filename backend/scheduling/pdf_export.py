@@ -49,7 +49,8 @@ def generate_class_timetable_pdf(class_obj, semester):
 
     periods = []
     for p in semester.daily_periods:
-        periods.append(f"{p.get('name', f'第{p.get('order', len(periods)+1)}节')}")
+        default_name = f"第{p.get('order', len(periods) + 1)}节"
+        periods.append(p.get('name', default_name))
     if not periods:
         periods = [f'第{i+1}节' for i in range(7)]
 
@@ -136,7 +137,8 @@ def generate_teacher_timetable_pdf(teacher, semester):
 
     periods = []
     for p in semester.daily_periods:
-        periods.append(f"{p.get('name', f'第{p.get('order', len(periods)+1)}节')}")
+        default_name = f"第{p.get('order', len(periods) + 1)}节"
+        periods.append(p.get('name', default_name))
     if not periods:
         periods = [f'第{i+1}节' for i in range(7)]
 
@@ -223,7 +225,8 @@ def generate_classroom_timetable_pdf(classroom, semester):
 
     periods = []
     for p in semester.daily_periods:
-        periods.append(f"{p.get('name', f'第{p.get('order', len(periods)+1)}节')}")
+        default_name = f"第{p.get('order', len(periods) + 1)}节"
+        periods.append(p.get('name', default_name))
     if not periods:
         periods = [f'第{i+1}节' for i in range(7)]
 

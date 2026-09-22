@@ -100,6 +100,53 @@ class SwapRequest(models.Model):
         return f"调课申请: {self.requesting_teacher} <-> {self.target_teacher}"
 
 
+class SwapRecord(models.Model):
+    """教务员发起调课（交换两条排课时段）的操作记录。
+
+    用于幂等控制（重复/并发提交只生效一次）以及刷新后回看交换结果或拒绝原因。
+    """
+    STATUS_CHOICES = [
+        ('success', '交换成功'),
+        ('rejected', '试算拒绝'),
+    ]
+
+    client_token = models.CharField(
+        max_length=64, unique=True, db_index=True,
+        help_text='客户端幂等令牌，同一令牌重复或并发提交只生效一次'
+    )
+    semester = models.ForeignKey(
+        Semester, on_delete=models.CASCADE, related_name='swap_records'
+    )
+    entry1 = models.ForeignKey(
+        ScheduleEntry, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='swap_records_first'
+    )
+    entry2 = models.ForeignKey(
+        ScheduleEntry, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='swap_records_second'
+    )
+    entry1_id_snapshot = models.IntegerField(help_text='提交时条目1的ID快照')
+    entry2_id_snapshot = models.IntegerField(help_text='提交时条目2的ID快照')
+    reason = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    conflicts = models.JSONField(
+        default=list,
+        help_text='试算拒绝时导致拒绝的冲突明细；成功时保存重算后的冲突快照'
+    )
+    result = models.JSONField(
+        default=dict, help_text='交换成功后的两条条目结果快照'
+    )
+    message = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"调课 {self.entry1_id_snapshot} <-> {self.entry2_id_snapshot}: {self.get_status_display()}"
+
+
 class Substitute(models.Model):
     semester = models.ForeignKey(Semester, on_delete=models.CASCADE)
     original_teacher = models.ForeignKey(

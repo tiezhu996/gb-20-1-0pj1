@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import (
-    ClassCourse, ScheduleEntry, Conflict, SwapRequest, Substitute
+    ClassCourse, ScheduleEntry, Conflict, SwapRequest, SwapRecord, Substitute
 )
 
 
@@ -59,6 +59,20 @@ class SwapRequestSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class SwapRecordSerializer(serializers.ModelSerializer):
+    """调课操作记录，用于刷新后回看交换结果或拒绝原因。"""
+
+    class Meta:
+        model = SwapRecord
+        fields = '__all__'
+        read_only_fields = [
+            'client_token', 'semester', 'entry1', 'entry2',
+            'entry1_id_snapshot', 'entry2_id_snapshot', 'reason',
+            'status', 'conflicts', 'result', 'message',
+            'created_at', 'updated_at',
+        ]
+
+
 class SubstituteSerializer(serializers.ModelSerializer):
     original_teacher_name = serializers.CharField(
         source='original_teacher.name', read_only=True
@@ -84,7 +98,11 @@ class ConflictCheckSerializer(serializers.Serializer):
 class SwapScheduleRequestSerializer(serializers.Serializer):
     entry1_id = serializers.IntegerField()
     entry2_id = serializers.IntegerField()
-    reason = serializers.CharField(required=False)
+    reason = serializers.CharField(required=False, allow_blank=True, default='')
+    client_token = serializers.CharField(
+        required=False, allow_blank=True, max_length=64,
+        help_text='客户端生成的幂等令牌；未提供时由服务端生成'
+    )
 
 
 class SubstituteRequestSerializer(serializers.Serializer):

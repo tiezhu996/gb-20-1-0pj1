@@ -3,10 +3,11 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
-from django.db import transaction
+from django.db import transaction, IntegrityError
+import uuid
 from core.models import Semester, Classroom, Teacher, Class
 from .models import (
-    ClassCourse, ScheduleEntry, Conflict, SwapRequest, Substitute
+    ClassCourse, ScheduleEntry, Conflict, SwapRequest, SwapRecord, Substitute
 )
 from .serializers import (
     ClassCourseSerializer, ScheduleEntrySerializer,
@@ -15,7 +16,10 @@ from .serializers import (
     AutoScheduleRequestSerializer, ConflictCheckSerializer,
     SwapScheduleRequestSerializer, SubstituteRequestSerializer
 )
-from .csp_solver import CSPScheduler, ConflictDetector, SchedulingTask, TimeSlot
+from .csp_solver import CSPScheduler, SchedulingTask
+from .swap_service import (
+    simulate_swap, rebuild_semester_conflicts, detect_semester_conflicts
+)
 from .pdf_export import (
     generate_class_timetable_pdf,
     generate_teacher_timetable_pdf,
@@ -171,35 +175,7 @@ class ScheduleEntryViewSet(viewsets.ModelViewSet):
                 ))
             ScheduleEntry.objects.bulk_create(bulk_entries)
 
-            all_entries = ScheduleEntry.objects.filter(
-                semester=semester
-            ).values('id', 'teacher_id', 'classroom_id', 'class_id', 'day_of_week', 'period')
-
-            detector = ConflictDetector()
-            conflicts = detector.detect_conflicts(list(all_entries))
-
-            Conflict.objects.filter(semester=semester).delete()
-            bulk_conflicts = []
-            for c in conflicts:
-                bulk_conflicts.append(Conflict(
-                    semester=semester,
-                    conflict_type=c['conflict_type'],
-                    day_of_week=c['day_of_week'],
-                    period=c['period'],
-                    involved_entries=c['involved_entries'],
-                    message=c['message']
-                ))
-            Conflict.objects.bulk_create(bulk_conflicts)
-
-            for c in conflicts:
-                for eid in c['involved_entries']:
-                    try:
-                        entry = ScheduleEntry.objects.get(id=eid)
-                        entry.is_conflict = True
-                        entry.conflict_type = c['conflict_type']
-                        entry.save()
-                    except ScheduleEntry.DoesNotExist:
-                        pass
+            conflicts = rebuild_semester_conflicts(semester)
 
         final_entries = ScheduleEntry.objects.filter(semester=semester)
         serializer = ScheduleEntryDetailSerializer(final_entries, many=True)
@@ -218,56 +194,212 @@ class ScheduleEntryViewSet(viewsets.ModelViewSet):
             return Response(req_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         semester_id = req_serializer.validated_data['semester_id']
-        entries = ScheduleEntry.objects.filter(
-            semester_id=semester_id
-        ).values('id', 'teacher_id', 'classroom_id', 'class_id', 'day_of_week', 'period')
+        try:
+            semester = Semester.objects.get(id=semester_id)
+        except Semester.DoesNotExist:
+            return Response(
+                {'error': 'Semester not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-        detector = ConflictDetector()
-        conflicts = detector.detect_conflicts(list(entries))
+        conflicts = detect_semester_conflicts(semester)
 
         return Response({'conflicts': conflicts})
 
+    def _build_swap_response(self, record: SwapRecord, replayed: bool):
+        """根据 SwapRecord 构造统一响应（首次提交与幂等回放共用）。"""
+        base = {
+            'status': record.status,
+            'replayed': replayed,
+            'client_token': record.client_token,
+            'message': record.message,
+            'reason': record.reason,
+        }
+        if record.status == 'success':
+            base.update({
+                'entry1': record.result.get('entry1'),
+                'entry2': record.result.get('entry2'),
+                'conflicts': record.conflicts,
+            })
+        else:
+            base.update({
+                'conflicts': record.conflicts,
+            })
+        http_status = (
+            status.HTTP_200_OK
+            if record.status == 'success'
+            else status.HTTP_409_CONFLICT
+        )
+        return Response(base, status=http_status)
+
     @action(detail=False, methods=['post'])
     def swap(self, request):
+        """教务员调课：交换两条排课的时段。
+
+        流程：参数/规则校验 → 行锁 + 幂等令牌（重复或并发提交只生效一次）→
+        试算交换后的教师/教室/班级占用，任一冲突即整笔拒绝、原课表不变 →
+        试算通过才交换时段，并重算冲突记录与条目状态。
+        """
         req_serializer = SwapScheduleRequestSerializer(data=request.data)
         if not req_serializer.is_valid():
             return Response(req_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         entry1_id = req_serializer.validated_data['entry1_id']
         entry2_id = req_serializer.validated_data['entry2_id']
-        reason = req_serializer.validated_data.get('reason', '')
+        reason = req_serializer.validated_data.get('reason') or ''
+        client_token = (
+            req_serializer.validated_data.get('client_token')
+            or uuid.uuid4().hex
+        )
+        # 空白令牌视为未提供，由服务端生成
+        client_token = client_token.strip() or uuid.uuid4().hex
 
-        try:
-            entry1 = ScheduleEntry.objects.get(id=entry1_id)
-            entry2 = ScheduleEntry.objects.get(id=entry2_id)
-        except ScheduleEntry.DoesNotExist:
+        if entry1_id == entry2_id:
             return Response(
-                {'error': 'One or both entries not found'},
-                status=status.HTTP_404_NOT_FOUND
+                {'error': '不能与自身调课，请选择两条不同的排课'},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-        with transaction.atomic():
-            day1, period1 = entry1.day_of_week, entry1.period
-            day2, period2 = entry2.day_of_week, entry2.period
+        # 幂等命中：同一令牌的重复提交（含上一笔仍在进行时的并发提交）
+        existing = SwapRecord.objects.filter(
+            client_token=client_token
+        ).first()
+        if existing is not None:
+            return self._build_swap_response(existing, replayed=True)
 
-            entry1.day_of_week, entry1.period = day2, period2
-            entry2.day_of_week, entry2.period = day1, period1
+        record = None
+        try:
+            with transaction.atomic():
+                # 按固定顺序加行锁，既防止并发交换造成丢失更新，也避免死锁
+                entries = {
+                    e.id: e for e in ScheduleEntry.objects.select_for_update().filter(
+                        id__in=[entry1_id, entry2_id]
+                    ).select_related('semester', 'teacher', 'classroom', 'class_id', 'course')
+                }
+                entry1 = entries.get(entry1_id)
+                entry2 = entries.get(entry2_id)
+                if entry1 is None or entry2 is None:
+                    return Response(
+                        {'error': 'One or both entries not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
 
-            entry1.save()
-            entry2.save()
+                # 拿到锁后再查一次令牌：并发请求会在锁上排队，
+                # 此时首笔记录已提交，直接回放其结果，保证只生效一次
+                existing = SwapRecord.objects.filter(client_token=client_token).first()
+                if existing is not None:
+                    return self._build_swap_response(existing, replayed=True)
 
-            if reason:
-                SwapRequest.objects.create(
+                if entry1.semester_id != entry2.semester_id:
+                    return Response(
+                        {'error': '两条排课不属于同一学期，不能调课'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                if entry1.day_of_week == entry2.day_of_week and entry1.period == entry2.period:
+                    return Response(
+                        {'error': '两条排课已在同一时段，无需调课'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                # 锁定规则不变：被锁定的条目不允许参与调课
+                if entry1.is_locked or entry2.is_locked:
+                    locked_names = []
+                    if entry1.is_locked:
+                        locked_names.append(f"{entry1.course.name}（{entry1.class_id.name}）")
+                    if entry2.is_locked:
+                        locked_names.append(f"{entry2.course.name}（{entry2.class_id.name}）")
+                    return Response(
+                        {'error': f"以下排课已锁定，不能调课：{'、'.join(locked_names)}"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                # 先试算：任一冲突即整笔拒绝，不修改任何课表
+                trial_conflicts = simulate_swap(entry1, entry2)
+
+                if trial_conflicts:
+                    conflict_desc = '；'.join(c['message'] for c in trial_conflicts)
+                    record = SwapRecord.objects.create(
+                        client_token=client_token,
+                        semester=entry1.semester,
+                        entry1=entry1,
+                        entry2=entry2,
+                        entry1_id_snapshot=entry1.id,
+                        entry2_id_snapshot=entry2.id,
+                        reason=reason,
+                        status='rejected',
+                        conflicts=trial_conflicts,
+                        message=f'调课被拒绝：试算发现占用冲突（{conflict_desc}）',
+                    )
+                    return self._build_swap_response(record, replayed=False)
+
+                # 试算通过：交换时段
+                entry1.day_of_week, entry2.day_of_week = entry2.day_of_week, entry1.day_of_week
+                entry1.period, entry2.period = entry2.period, entry1.period
+                entry1.save(update_fields=['day_of_week', 'period', 'updated_at'])
+                entry2.save(update_fields=['day_of_week', 'period', 'updated_at'])
+
+                # 重算整学期冲突记录与条目状态
+                remaining_conflicts = rebuild_semester_conflicts(entry1.semester)
+
+                entry1.refresh_from_db()
+                entry2.refresh_from_db()
+                result_snapshot = {
+                    'entry1': ScheduleEntryDetailSerializer(entry1).data,
+                    'entry2': ScheduleEntryDetailSerializer(entry2).data,
+                }
+
+                if reason:
+                    SwapRequest.objects.create(
+                        semester=entry1.semester,
+                        requesting_teacher=entry1.teacher,
+                        target_teacher=entry2.teacher,
+                        entry1=entry1,
+                        entry2=entry2,
+                        reason=reason,
+                        status='approved'
+                    )
+
+                record = SwapRecord.objects.create(
+                    client_token=client_token,
                     semester=entry1.semester,
-                    requesting_teacher=entry1.teacher,
-                    target_teacher=entry2.teacher,
                     entry1=entry1,
                     entry2=entry2,
+                    entry1_id_snapshot=entry1.id,
+                    entry2_id_snapshot=entry2.id,
                     reason=reason,
-                    status='approved'
+                    status='success',
+                    conflicts=remaining_conflicts,
+                    result=result_snapshot,
+                    message='调课成功：两个时段已交换',
                 )
+        except IntegrityError:
+            # 两个并发请求同时通过预检查、且在行锁外竞速插入同令牌记录时，
+            # 唯一约束会拒绝其中一笔：回滚后回放首笔结果，确保只生效一次
+            existing = SwapRecord.objects.filter(client_token=client_token).first()
+            if existing is not None:
+                return self._build_swap_response(existing, replayed=True)
+            raise
 
-        return Response({'status': 'success', 'message': 'Swap completed'})
+        return self._build_swap_response(record, replayed=False)
+
+    @action(detail=False, methods=['get'])
+    def swap_result(self, request):
+        """按幂等令牌查询调课结果，供刷新页面后展示交换结果或拒绝原因。"""
+        client_token = request.query_params.get('client_token')
+        if not client_token:
+            return Response(
+                {'error': 'client_token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        record = SwapRecord.objects.filter(client_token=client_token).first()
+        if record is None:
+            return Response(
+                {'error': '未找到该调课记录'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        return self._build_swap_response(record, replayed=True)
 
     @action(detail=False, methods=['post'])
     def substitute(self, request):

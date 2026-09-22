@@ -118,6 +118,39 @@ export interface SwapRequest {
   updated_at?: string;
 }
 
+export interface SwapCourseDetail {
+  entry_id: number;
+  course_name: string;
+  teacher_name: string;
+  classroom_name: string;
+  class_name: string;
+  day_of_week: number;
+  period: number;
+}
+
+export interface SwapConflict {
+  conflict_type: 'teacher' | 'classroom' | 'class';
+  conflict_type_label: string;
+  day_of_week: number;
+  period: number;
+  slot_label: string;
+  resource_name: string;
+  involved_entries: number[];
+  involved_courses: SwapCourseDetail[];
+  message: string;
+}
+
+export interface SwapResponse {
+  status: 'success' | 'rejected';
+  replayed: boolean;
+  client_token: string;
+  message: string;
+  reason?: string;
+  conflicts: SwapConflict[];
+  entry1?: ScheduleEntry;
+  entry2?: ScheduleEntry;
+}
+
 export interface Substitute {
   id: number;
   semester: number;

@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
 import type {
   Classroom, Teacher, Class, Course, Semester,
-  ClassCourse, ScheduleEntry, Conflict, SwapRequest, Substitute
+  ClassCourse, ScheduleEntry, Conflict, SwapRequest, Substitute, SwapResponse
 } from '../types';
 
 @Injectable({ providedIn: 'root' })
@@ -144,12 +144,23 @@ export class ApiService {
     });
   }
 
-  swapEntries(entry1Id: number, entry2Id: number, reason?: string): Observable<any> {
-    return this.http.post(`${this.baseUrl}/schedules/swap/`, {
+  swapEntries(
+    entry1Id: number,
+    entry2Id: number,
+    reason?: string,
+    clientToken?: string
+  ): Observable<SwapResponse> {
+    return this.http.post<SwapResponse>(`${this.baseUrl}/schedules/swap/`, {
       entry1_id: entry1Id,
       entry2_id: entry2Id,
-      reason
+      reason,
+      client_token: clientToken
     });
+  }
+
+  getSwapResult(clientToken: string): Observable<SwapResponse> {
+    const params = new HttpParams().set('client_token', clientToken);
+    return this.http.get<SwapResponse>(`${this.baseUrl}/schedules/swap_result/`, { params });
   }
 
   assignSubstitute(entryId: number, substituteTeacherId: number, startDate: string, endDate: string, reason: string): Observable<any> {

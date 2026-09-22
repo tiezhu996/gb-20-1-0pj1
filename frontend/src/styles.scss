@@ -127,3 +127,95 @@ mat-sidenav {
 .fc-event:hover {
   opacity: 0.85;
 }
+
+/* 调课 */
+.swap-panel {
+  margin-bottom: 16px;
+  border-left: 4px solid #ff9800;
+}
+
+.swap-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.swap-selected-list {
+  margin: 10px 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.swap-reason-field {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.swap-result-panel {
+  margin-top: 16px;
+}
+
+.swap-result-panel.swap-success {
+  border-left: 4px solid #4caf50;
+  background-color: #e8f5e9;
+}
+
+.swap-result-panel.swap-rejected,
+.swap-rejected-panel {
+  border-left: 4px solid #f44336;
+  background-color: #ffebee;
+}
+
+.swap-result-message {
+  font-weight: 500;
+}
+
+.swap-replayed-tag {
+  color: #888;
+  font-size: 12px;
+}
+
+.swap-detail-text {
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.swap-warn-text {
+  color: #d32f2f;
+}
+
+.swap-conflict-list {
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.swap-conflict-list ul {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.schedule-card.selectable-entry {
+  cursor: pointer;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+
+.schedule-card.selectable-entry:hover {
+  box-shadow: 0 3px 8px rgba(255, 152, 0, 0.5);
+  transform: translateY(-1px);
+}
+
+.schedule-card.selected-entry {
+  outline: 3px solid #ff9800;
+  outline-offset: -3px;
+  background-color: #fff3e0 !important;
+}
+
+.swap-selected-icon {
+  font-size: 16px;
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+  color: #ff9800;
+}
